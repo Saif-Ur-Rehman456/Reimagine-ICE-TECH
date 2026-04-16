@@ -1,7 +1,5 @@
 # 🧊 ICE TECH | Next-Generation High-Performance Web Experience
 
-![ICE TECH Hero](public/assets/hero.png)
-
 ## 🚀 Overview
 
 **ICE TECH** is a premium, high-fidelity landing page designed with a focus on **immersive storytelling**, **fluid animations**, and **maximum performance**. Built using React 19 and GSAP, this project pushes the boundaries of modern web aesthetics with glassmorphic UI elements, smooth scrolling transitions, and ultra-optimized Core Web Vitals.
