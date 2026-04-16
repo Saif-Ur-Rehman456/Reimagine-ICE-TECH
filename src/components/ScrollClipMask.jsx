@@ -14,10 +14,12 @@ const ScrollClipMask = () => {
   useGSAP(() => {
     if (!containerRef.current || !stickyRef.current) return;
 
-    // ── STEP 3: prefers-reduced-motion bypass ──
-    if (reducedMotion) {
-      gsap.set(maskRef.current, { clipPath: 'inset(20% 20% 20% 20% round 48px)' });
-      gsap.set(imageRef.current, { scale: 1.1 });
+    // ── STEP 3: prefers-reduced-motion bypass & Mobile bypass ──
+    const isMobile = window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+    
+    if (reducedMotion || isMobile) {
+      gsap.set(maskRef.current, { clipPath: 'inset(10% 10% 10% 10% round 24px)' });
+      gsap.set(imageRef.current, { scale: 1 });
       gsap.set('.marquee-wrapper', { opacity: 1 });
       return;
     }

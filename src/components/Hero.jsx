@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useGSAP } from '@gsap/react';
@@ -7,18 +7,6 @@ import { useReducedMotion } from '../hooks/useReducedMotion';
 
 gsap.registerPlugin(ScrollTrigger);
 
-// ── STEP 1: Module-level debounce — created ONCE, never recreated on renders ──
-// Putting this inside the component body created a NEW debounced function on
-// every render, orphaning the previous timer reference.
-const debounce = (fn, ms) => {
-  let t;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  };
-};
-const _debouncedSTRefresh = debounce(() => ScrollTrigger.refresh(), 200);
-
 const Hero = () => {
   const reducedMotion = useReducedMotion();
   const lenis = useLenis();
@@ -26,8 +14,8 @@ const Hero = () => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [firstFrameLoaded, setFirstFrameLoaded] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
-  // Refs for animation state — no React state used for hot-path data
   const imagesRef = useRef([]);
   const frameIndexRef = useRef(0);
   const renderScheduledRef = useRef(false);
@@ -37,11 +25,32 @@ const Hero = () => {
   const mountedRef = useRef(true);
 
   const frameCount = 120;
+  
+  // Check if it's a mobile device (runs once on mount)
+  useEffect(() => {
+    const isMobileDevice = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setIsMobile(isMobileDevice);
+    mountedRef.current = true;
+    
+    return () => {
+      mountedRef.current = false;
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+    };
+  }, []);
 
   const preloadSequence = useCallback(async (abortSignal) => {
+    if (isMobile) {
+        // Mobile: only load the first frame for static display
+        const img = new Image();
+        img.src = `ICE-TECH/imgi_17_ezgif-frame-001.webp`;
+        img.onload = () => {
+            if (mountedRef.current) setFirstFrameLoaded(true);
+        }
+        return;
+    }
+
     const rawDpr = window.devicePixelRatio || 1;
-    const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    dprRef.current = isMobile ? Math.min(rawDpr, 1.5) : Math.min(rawDpr, 2);
+    dprRef.current = Math.min(rawDpr, 2);
 
     const loadFrame = (index) => {
       return new Promise((resolve) => {
@@ -58,49 +67,45 @@ const Hero = () => {
       });
     };
 
-    // ── STEP 1: Load & decode frame 0 first for instant LCP ──
+    // Load first frame instantly
     const firstImg = await loadFrame(0);
     if (!mountedRef.current || abortSignal.aborted) return;
-
     if (firstImg) {
       await firstImg.decode?.().catch(() => {});
       setFirstFrameLoaded(true);
     }
 
-    // ── STEP 1: Remaining 119 frames loaded on idle — main thread stays free ──
+    // Defer remaining 119 frames to idle periods (reduces main thread lag)
     const loadRest = async () => {
       for (let i = 1; i < frameCount; i++) {
         if (!mountedRef.current || abortSignal.aborted) return;
         const img = await loadFrame(i);
-        if (img) img.decode?.().catch(() => {});
-        // Yield to main thread every 5 frames to preserve INP budget
-        if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
+        // Minimal decoding to not block main thread
+        // Yield heavily to main thread every 2 frames
+        if (i % 2 === 0) await new Promise(r => setTimeout(r, 0));
       }
     };
 
     if (typeof requestIdleCallback !== 'undefined') {
-      requestIdleCallback(() => loadRest(), { timeout: 3000 });
+      requestIdleCallback(() => loadRest(), { timeout: 2000 });
     } else {
-      setTimeout(loadRest, 200);
+      setTimeout(loadRest, 100);
     }
-  }, []);
+  }, [isMobile]);
 
   useEffect(() => {
-    mountedRef.current = true;
+    // Only start preloading after mobile check is done
+    if (isMobile === undefined) return;
+    
     const abortController = new AbortController();
     preloadSequence(abortController.signal);
-
-    return () => {
-      mountedRef.current = false;
-      abortController.abort();
-      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
-    };
-  }, [preloadSequence]);
+    return () => abortController.abort();
+  }, [preloadSequence, isMobile]);
 
   const renderFrame = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
-    if (!canvas || !ctx) return;
+    if (!canvas || !ctx || isMobile) return;
 
     const img = imagesRef.current[frameIndexRef.current];
     if (!img || !img.complete) {
@@ -120,12 +125,12 @@ const Hero = () => {
     const ny = (ch - nh) * 0.5;
 
     ctx.clearRect(0, 0, cw, ch);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'medium';
+    // Remove smoothing for much faster rendering, or rely on hardware low-quality
+    ctx.imageSmoothingEnabled = false; 
     ctx.drawImage(img, 0, 0, iw, ih, nx, ny, nw, nh);
 
     renderScheduledRef.current = false;
-  }, []);
+  }, [isMobile]);
 
   const scheduleRender = useCallback(() => {
     if (renderScheduledRef.current) return;
@@ -134,6 +139,7 @@ const Hero = () => {
   }, [renderFrame]);
 
   const resizeCanvas = useCallback(() => {
+    if (isMobile) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -147,13 +153,12 @@ const Hero = () => {
     canvas.style.height = `${height}px`;
 
     scheduleRender();
-    // ── STEP 1: Use module-level debounce — no stale ref risk ──
-    _debouncedSTRefresh();
-  }, [scheduleRender]);
+  }, [scheduleRender, isMobile]);
 
   useGSAP(
     () => {
-      if (!firstFrameLoaded) return;
+      // Mobile: disable ALL GSAP animations to save CPU/Battery
+      if (!firstFrameLoaded || isMobile || reducedMotion) return;
 
       const canvas = canvasRef.current;
       const container = containerRef.current;
@@ -161,43 +166,45 @@ const Hero = () => {
 
       ctxRef.current = canvas.getContext('2d', {
         alpha: false,
-        desynchronized: true,
+        desynchronized: true,    // Fast path for low latency
         willReadFrequently: false,
       });
 
       resizeCanvas();
-      window.addEventListener('resize', resizeCanvas, { passive: true });
+      
+      let resizeTimer;
+      const handleResize = () => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+              resizeCanvas();
+              ScrollTrigger.refresh();
+          }, 150);
+      };
 
-      // ── STEP 3: prefers-reduced-motion bypass ──
-      // Show the first frame statically with no ScrollTrigger timeline.
-      // The canvas is sized and drawn by resizeCanvas() above.
-      if (reducedMotion) {
-        return () => window.removeEventListener('resize', resizeCanvas);
-      }
+      window.addEventListener('resize', handleResize, { passive: true });
 
       const tl = gsap.timeline({
         scrollTrigger: {
           trigger: container,
           start: 'top top',
-          end: () => `+=${window.innerHeight * 3}`,
+          end: () => `+=${window.innerHeight * 2.5}`,
           pin: true,
           pinSpacing: true,
-          scrub: 0.6,
+          scrub: 0.1, // drastically reduced scrub delay for instant response (no lag feeling)
           invalidateOnRefresh: true,
           anticipatePin: 1,
-          refreshPriority: 1,
         },
       });
 
       const playhead = { frame: 0 };
       tl.to(playhead, {
         frame: frameCount - 1,
-        snap: 'frame',
+        snap: 'frame', // Snap to exact integer frames for sharpness
         ease: 'none',
-        duration: 3,
         onUpdate: () => {
-          if (playhead.frame !== frameIndexRef.current) {
-            frameIndexRef.current = playhead.frame;
+          const nextFrame = Math.round(playhead.frame);
+          if (nextFrame !== frameIndexRef.current) {
+            frameIndexRef.current = nextFrame;
             scheduleRender();
           }
         }
@@ -207,47 +214,36 @@ const Hero = () => {
         canvas,
         {
           opacity: 0,
-          scale: 0.82,
-          yPercent: -12,
-          filter: 'blur(8px)',
-          ease: 'power3.out',
-          duration: 0.8,
+          scale: 0.85,
+          yPercent: -10,
+          filter: 'blur(4px)',
+          ease: 'power2.inOut',
         },
-        '>'
+        '>-20%' // Start fading out slightly before sequence ends
       );
 
       ScrollTrigger.refresh();
-
       if (lenis) requestAnimationFrame(() => lenis.resize());
 
       return () => {
-        window.removeEventListener('resize', resizeCanvas);
+        window.removeEventListener('resize', handleResize);
       };
     },
-    { dependencies: [firstFrameLoaded, lenis, reducedMotion], scope: containerRef }
+    { dependencies: [firstFrameLoaded, lenis, reducedMotion, isMobile], scope: containerRef }
   );
 
   return (
-    // ── STEP 3: section gets explicit min-height so browser reserves space
-    //    before canvas dimensions are calculated — eliminates CLS ──
     <section
       ref={containerRef}
       id="hero"
       aria-label="ICE-TECH cinematic hero sequence"
-      className={`relative w-screen overflow-hidden bg-[#0D1A1A] transition-opacity duration-500 ${firstFrameLoaded ? 'opacity-100' : 'opacity-0'}`}
+      className={`relative w-screen overflow-hidden bg-surface transition-opacity duration-700 ${firstFrameLoaded ? 'opacity-100' : 'opacity-0'}`}
       style={{
         perspective: '1200px',
-        height: '100svh',         // svh = accounts for mobile browser chrome
-        minHeight: '100vh',       // fallback: prevents CLS before svh resolves
-        aspectRatio: 'auto',
+        height: '100svh',
+        minHeight: '100vh',
       }}
     >
-      {/*
-        ── STEP 5: SEO SEMANTIC LAYER ──
-        Crawlers cannot "see" canvas. This sr-only block gives Googlebot
-        a fully semantic h1 + description anchored to the hero section.
-        Visually hidden via the sr-only utility but fully in the DOM.
-      */}
       <div className="sr-only">
         <h1>ICE-TECH — Premium Artisanal Ice Cream Est. 1990</h1>
         <p>
@@ -257,36 +253,43 @@ const Hero = () => {
         </p>
       </div>
 
-      <canvas
-        ref={canvasRef}
-        role="img"
-        aria-label="ICE-TECH product showcase — a scroll-driven cinematic animation"
-        className="block w-full h-full"
-        style={{
-          willChange: 'transform, opacity, filter',
-          transform: 'translateZ(0)',
-        }}
-      />
+      {isMobile ? (
+          // Mobile Fallback: Fast, CSS-only static background image (0 JS overhead)
+          <div 
+            className="absolute inset-0 w-full h-full bg-cover bg-center"
+            style={{
+                backgroundImage: `url('ICE-TECH/imgi_17_ezgif-frame-001.webp')`
+            }}
+          />
+      ) : (
+          <canvas
+            ref={canvasRef}
+            role="img"
+            aria-label="ICE-TECH product showcase — a scroll-driven cinematic animation"
+            className="block w-full h-full"
+            style={{
+              willChange: 'transform, opacity, filter',
+              transform: 'translateZ(0)',
+            }}
+          />
+      )}
 
-      {/* STEP 5: aria-hidden — purely decorative vignette, not meaningful content */}
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none z-10"
         style={{
-          background: 'radial-gradient(circle at center, transparent 40%, #0D1A1A 95%)',
-          opacity: 0.25,
+          background: 'radial-gradient(circle at center, transparent 40%, #0D1A1A 100%)',
+          opacity: 0.4,
         }}
       />
 
       {firstFrameLoaded && (
         <div className="absolute bottom-8 md:bottom-12 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in duration-1000 delay-500">
           <div className="flex flex-col items-center gap-2">
-            <div className="relative w-7 h-11 md:w-8 md:h-12 rounded-full border border-[#00f2fe]/30 flex justify-center p-1 backdrop-blur-sm bg-black/20">
-              <div className="w-1 md:w-1.5 h-2.5 md:h-3 bg-gradient-to-b from-[#00f2fe] to-[#4facfe] rounded-full animate-soft-bounce shadow-[0_0_15px_#00f2fe]" />
-              {/* aria-hidden: decorative ping ring */}
-              <div aria-hidden="true" className="absolute inset-0 rounded-full border border-[#00f2fe]/10 animate-ping opacity-50" />
+            <div className="relative w-7 h-11 md:w-8 md:h-12 rounded-full border border-primary/40 flex justify-center p-1 backdrop-blur-sm bg-black/30">
+              <div className="w-1 md:w-1.5 h-2.5 md:h-3 bg-primary rounded-full animate-soft-bounce shadow-[0_0_15px_1px_rgba(26,86,219,0.5)]" />
             </div>
-            <span className="text-[#00f2fe]/60 text-[10px] md:text-xs uppercase tracking-[0.4em] font-light">
+            <span className="text-primary/70 text-[10px] md:text-xs uppercase tracking-[0.4em] font-light font-label">
               Scroll
             </span>
           </div>
@@ -296,7 +299,7 @@ const Hero = () => {
       <style>{`
         @keyframes soft-bounce {
           0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(6px); }
+          50% { transform: translateY(8px); }
         }
         .animate-soft-bounce {
           animation: soft-bounce 2s ease-in-out infinite;
