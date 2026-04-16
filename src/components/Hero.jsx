@@ -48,7 +48,7 @@ const Hero = () => {
         const img = new Image();
         const frameNum = (index + 1).toString().padStart(3, '0');
         const prefixNum = index + 17;
-        img.src = `/ICE-TECH/imgi_${prefixNum}_ezgif-frame-${frameNum}.webp`;
+        img.src = `ICE-TECH/imgi_${prefixNum}_ezgif-frame-${frameNum}.webp`;
 
         img.onload = () => {
           imagesRef.current[index] = img;
