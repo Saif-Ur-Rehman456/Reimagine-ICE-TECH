@@ -43,7 +43,7 @@ const Navbar = () => {
       <div className="flex items-center justify-between px-8 py-1.5 bg-[#EFFBFF] border border-gray-200 rounded-full shadow-lg">
         {/* Logo / Brand */}
         <div className="flex items-center" role="img" aria-label="ICE-TECH logo">
-            <img src="/assets/logo.webp" alt="ICE TECH Logo" className="h-6 sm:h-8 object-contain" />
+            <img src="assets/logo.webp" alt="ICE TECH Logo" className="h-6 sm:h-8 object-contain" />
         </div>
 
         {/* Navigation Links */}

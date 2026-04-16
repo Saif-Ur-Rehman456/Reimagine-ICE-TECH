@@ -200,7 +200,7 @@ const ScrollClipMask = () => {
           */}
           <img
             ref={imageRef}
-            src="/assets/im2.webp"
+            src="assets/im2.webp"
             alt="ICE-TECH premium ice cream product — creamy soft serve in a cone"
             width={1920}
             height={1080}
