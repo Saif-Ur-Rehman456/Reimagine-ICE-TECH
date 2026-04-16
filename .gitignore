@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.vite
+.vite/
 
 # Editor directories and files
 .vscode/*
@@ -27,6 +29,8 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+.env.production
+.env.*
 
 # OS files
 Thumbs.db
