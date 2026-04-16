@@ -75,7 +75,7 @@ const StartingAnimation = ({ onComplete }) => {
     const minTimeDelay = setTimeout(() => {
       minTimeElapsed = true;
       if (isReady) finishSequence();
-    }, 2800);
+    }, 12000); // 12 seconds to ensure 120 frames load on 4Mbps connection
 
     const handleReady = () => {
       if (document.fonts && document.fonts.ready) {
