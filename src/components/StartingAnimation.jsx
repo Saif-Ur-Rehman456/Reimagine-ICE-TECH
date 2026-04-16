@@ -1,222 +1,153 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import gsap from 'gsap';
+import { useGSAP } from '@gsap/react';
 import { useReducedMotion } from '../hooks/useReducedMotion';
+
+// ── OPTIMIZATION: Static arrays and strings extracted to avoid re-allocation ──
+const BRAND_TEXT = ['I', 'C', 'E', '\u00A0', 'T', 'E', 'C', 'H'];
+const NOISE_BG = 'url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E")';
 
 const StartingAnimation = ({ onComplete }) => {
   const reducedMotion = useReducedMotion();
-  const [progress, setProgress] = useState(0);
   const containerRef = useRef(null);
-  const contentRef = useRef(null);
-  const columnRefs = useRef([]);
-  const progressBarRef = useRef(null);
-  const statusRef = useRef(null);
-  const progressObjRef = useRef({ value: 0 });
-  // ── STEP 1: Track exit timeline so we can kill it on unmount ──
-  const exitTlRef = useRef(null);
+  
+  // ── OPTIMIZATION: Stabilize onComplete to prevent effect re-runs if parent passes inline function ──
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
-  useEffect(() => {
-    // ── STEP 3: prefers-reduced-motion bypass ──
-    // Instantly complete without any animation to respect vestibular disorders.
+  // ── OPTIMIZATION: useGSAP provides automatic context cleanup and React 18 Strict Mode compatibility ──
+  useGSAP(() => {
     if (reducedMotion) {
       document.body.style.overflow = '';
-      onComplete?.();
+      onCompleteRef.current?.();
       return;
     }
 
     document.body.style.overflow = 'hidden';
-
-    // ── STEP 1: isMounted flag prevents async callbacks touching unmounted state ──
     let isMounted = true;
 
-    const updateProgressUI = () => {
-      if (!isMounted) return;
-      const value = Math.floor(progressObjRef.current.value);
-      setProgress(value);
-      if (progressBarRef.current) progressBarRef.current.style.width = `${value}%`;
-      
-      if (statusRef.current) {
-        if (value < 30) statusRef.current.textContent = 'INITIALIZING...';
-        else if (value < 70) statusRef.current.textContent = 'LOADING ASSETS...';
-        else if (value < 95) statusRef.current.textContent = 'RENDERING...';
-        else statusRef.current.textContent = 'COMPLETED!';
-      }
-    };
+    // Entrance Animation - automatically cleaned up by useGSAP context
+    const entranceTl = gsap.timeline();
+    
+    // We use standard GSAP selectors inside useGSAP context scope
+    entranceTl
+      .set('.panel', { yPercent: 0 })
+      .fromTo('.brand-char', 
+        { yPercent: 120, rotation: 10, opacity: 0 }, 
+        { yPercent: 0, rotation: 0, opacity: 1, duration: 1.2, stagger: 0.05, ease: 'power4.out', delay: 0.3 }
+      )
+      .fromTo('.glow-line',
+        { scaleX: 0, transformOrigin: 'center' },
+        { scaleX: 1, duration: 1, ease: 'power3.inOut' },
+        "-=0.8"
+      )
+      .fromTo('.subtitle-text',
+        { y: 20, opacity: 0 },
+        { y: 0, opacity: 1, duration: 1, ease: 'power3.out' },
+        "-=0.6"
+      );
 
+    let isReady = false;
+    let minTimeElapsed = false;
+    let exitTl;
+    
     const finishSequence = () => {
       if (!isMounted) return;
       
-      // ── Store exit tl in ref so cleanup can kill it ──
-      exitTlRef.current = gsap.timeline({
+      exitTl = gsap.timeline({
         onComplete: () => {
-          // Always restore overflow — even if React unmounts first
           document.body.style.overflow = '';
-          if (isMounted && onComplete) onComplete();
+          if (isMounted) onCompleteRef.current?.();
         }
       });
 
-      exitTlRef.current
-        .to(contentRef.current, {
-          scale: 0.9,
-          opacity: 0,
-          y: -30,
-          duration: 0.6,
-          ease: 'power2.out'
-        }, 0)
-        .to(columnRefs.current, {
-          yPercent: -100,
-          duration: 1.2,
-          stagger: 0.1,
-          ease: 'expo.inOut'
-        }, 0.2);
+      exitTl
+        .to('.subtitle-text', { y: -20, opacity: 0, duration: 0.5, ease: 'power3.in' }, 0)
+        .to('.glow-line', { scaleX: 0, duration: 0.5, ease: 'power3.inOut' }, 0.1)
+        .to('.brand-char', 
+          { yPercent: -120, rotation: -5, opacity: 0, duration: 0.6, stagger: 0.03, ease: 'power3.in' }, 
+          0.1
+        )
+        .to('.panel-top', { yPercent: -100, duration: 1.2, ease: 'expo.inOut' }, 0.6)
+        .to('.panel-bottom', { yPercent: 100, duration: 1.2, ease: 'expo.inOut' }, 0.6);
     };
 
-    const completeLoading = () => {
-      if (!isMounted) return;
-      gsap.to(progressObjRef.current, {
-        value: 100,
-        duration: 0.4,
-        ease: 'power2.out',
-        onUpdate: updateProgressUI,
-        onComplete: finishSequence
-      });
-    };
+    const minTimeDelay = setTimeout(() => {
+      minTimeElapsed = true;
+      if (isReady) finishSequence();
+    }, 2800);
 
-    // 1. Start an initial fake progress up to 85% to give the illusion of background activity
-    const initialTween = gsap.to(progressObjRef.current, {
-      value: 85,
-      // Fake progress duration - fast to give user immediate feedback
-      duration: 0.8, 
-      ease: 'power1.inOut',
-      onUpdate: updateProgressUI,
-    });
-
-    // 2. Logic to detect when actual page assets are ready
-    let fallbackTimeout;
-    
     const handleReady = () => {
       if (document.fonts && document.fonts.ready) {
-        document.fonts.ready.then(completeLoading).catch(completeLoading);
+        document.fonts.ready.then(() => {
+          isReady = true;
+          if (minTimeElapsed) finishSequence();
+        }).catch(() => {
+          isReady = true;
+          if (minTimeElapsed) finishSequence();
+        });
       } else {
-        completeLoading();
+        isReady = true;
+        if (minTimeElapsed) finishSequence();
       }
     };
 
-    const runDynamicLoading = () => {
-      if (document.readyState === 'complete') {
-        handleReady();
-      } else {
-        window.addEventListener('load', handleReady);
-      }
+    if (document.readyState === 'complete') {
+      handleReady();
+    } else {
+      window.addEventListener('load', handleReady);
+    }
 
-      // Safety fallback: Never keep the user waiting more than 1.2s total load time (Very fast Awwwards style)
-      fallbackTimeout = setTimeout(() => {
-        window.removeEventListener('load', handleReady);
-        completeLoading();
-      }, 1200); 
-    };
-
-    runDynamicLoading();
+    const fallbackTimeout = setTimeout(() => {
+      isReady = true;
+      if (minTimeElapsed) finishSequence();
+    }, 6000);
 
     return () => {
       isMounted = false;
       window.removeEventListener('load', handleReady);
+      clearTimeout(minTimeDelay);
       clearTimeout(fallbackTimeout);
-      // ── Critical — always restore body scroll on unmount ──
       document.body.style.overflow = '';
-      gsap.killTweensOf(progressObjRef.current);
-      initialTween.kill();
-      // Kill the exit timeline if still running (e.g. HMR, StrictMode double-mount)
-      exitTlRef.current?.kill();
+      if (exitTl) exitTl.kill(); // The context kills entranceTl automatically, but we ensure exitTl is caught if triggered late.
     };
-  }, [onComplete, reducedMotion]);
+  }, { scope: containerRef, dependencies: [reducedMotion] }); // Dependencies ensure effect only re-runs if reducedMotion changes
 
   return (
     <div 
       ref={containerRef}
-      className="fixed inset-0 w-full h-full flex z-[9999] pointer-events-none"
+      className="fixed inset-0 w-full h-full flex flex-col items-center justify-center z-[9999] pointer-events-auto overflow-hidden bg-transparent"
     >
-      <style>{`
-        @keyframes orbit-spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .animate-orbit-1 { animation: orbit-spin 5s linear infinite; }
-        .animate-orbit-2 { animation: orbit-spin 6.5s linear infinite reverse; }
-        @keyframes dot-blink {
-          0%, 100% { opacity: 0.3; }
-          50% { opacity: 1; }
-        }
-        .animate-blink-1 { animation: dot-blink 1.2s infinite ease-in-out; }
-        .animate-blink-2 { animation: dot-blink 1.2s infinite ease-in-out 0.15s; }
-        .animate-blink-3 { animation: dot-blink 1.2s infinite ease-in-out 0.3s; }
-      `}</style>
-      
-      {[0, 1, 2, 3].map((_, i) => (
-        <div 
-          key={i}
-          ref={el => columnRefs.current[i] = el}
-          className="flex-1 bg-[#1c5fdf] pointer-events-auto will-change-transform contain-paint"
-        ></div>
-      ))}
-
       <div 
-        ref={contentRef}
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 flex flex-col items-center justify-center pointer-events-auto w-full max-w-2xl px-6 will-change-[opacity,transform]"
-      >
-        <div className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 mb-12 flex items-center justify-center">
-           <div className="absolute inset-0 rounded-full border-[1.5px] border-white/20"></div>
-           <div className="absolute inset-6 sm:inset-8 md:inset-10 rounded-full border-[1px] border-white/10"></div>
-           
-           <div className="w-2.5 h-2.5 bg-white rounded-full z-10 shadow-[0_0_10px_2px_rgba(255,255,255,0.8)]"></div>
-
-           <div 
-             className="absolute inset-[-4px] rounded-full animate-orbit-1"
-             style={{
-               background: 'conic-gradient(from 0deg, transparent 0%, transparent 60%, rgba(255,255,255,0.5) 100%)',
-               maskImage: 'radial-gradient(transparent 30%, black 31%)',
-               WebkitMaskImage: 'radial-gradient(transparent 30%, black 31%)'
-             }}
-           ></div>
-           
-           <div 
-             className="absolute inset-2 sm:inset-4 md:inset-6 rounded-full animate-orbit-2"
-             style={{
-               background: 'conic-gradient(from 180deg, transparent 0%, transparent 80%, rgba(255,255,255,0.3) 100%)',
-               maskImage: 'radial-gradient(transparent 40%, black 41%)',
-               WebkitMaskImage: 'radial-gradient(transparent 40%, black 41%)'
-             }}
-           ></div>
+        className="panel panel-top absolute top-0 left-0 w-full h-1/2 bg-[#0D1A1A] will-change-transform"
+      ></div>
+      <div 
+        className="panel panel-bottom absolute bottom-0 left-0 w-full h-1/2 bg-[#0D1A1A] will-change-transform"
+      ></div>
+      
+      <div className="relative z-10 flex flex-col items-center justify-center w-full max-w-4xl px-4">
+        <div className="overflow-hidden pb-4">
+          <div className="flex justify-center text-5xl sm:text-7xl md:text-8xl lg:text-9xl font-black text-white tracking-[0.1em] origin-center leading-none">
+            {BRAND_TEXT.map((char, i) => (
+              <span key={i} className="brand-char inline-block will-change-transform mt-2">{char}</span>
+            ))}
+          </div>
         </div>
 
-        <div className="text-4xl sm:text-5xl md:text-7xl font-bold text-white z-10 tracking-[0.1em] mb-4 text-center">
-          ICE TECH
+        <div className="w-full flex justify-center h-[2px] mt-2 mb-6">
+          <div className="glow-line w-64 sm:w-96 h-[1.5px] bg-gradient-to-r from-transparent via-[#00f2fe]/80 to-transparent"></div>
         </div>
-
-        <div className="text-xl sm:text-2xl font-bold text-white mb-3 tracking-wider flex items-baseline justify-center">
-          {String(progress).padStart(3, ' ')}<span className="text-sm ml-1 text-white/80">/100</span>
-        </div>
-
-        <div className="w-64 sm:w-80 md:w-96 h-[4px] bg-white/20 rounded-full overflow-hidden mb-5">
-          <div
-            ref={progressBarRef}
-            className="h-full bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.5)] transition-all ease-out duration-[50ms]"
-            style={{ width: '0%', willChange: 'width' }}
-          ></div>
-        </div>
-
-        <div 
-          ref={statusRef}
-          className="text-[10px] sm:text-[11px] text-white/70 tracking-[0.2em] uppercase font-semibold h-5 mb-6 text-center"
-        >
-          INITIALIZING...
-        </div>
-
-        <div className="flex gap-2">
-          <div className="w-2 h-2 bg-white rounded-full animate-blink-1"></div>
-          <div className="w-2 h-2 bg-white rounded-full animate-blink-2"></div>
-          <div className="w-2 h-2 bg-white rounded-full animate-blink-3"></div>
+        
+        <div className="overflow-hidden">
+          <div 
+            className="subtitle-text text-[#00f2fe]/60 uppercase tracking-[0.4em] sm:tracking-[0.6em] text-[10px] sm:text-xs font-light px-4 text-center"
+          >
+            Premium Artisanal Taste
+          </div>
         </div>
       </div>
+      
+      <div className="absolute inset-0 z-20 pointer-events-none opacity-[0.03]" style={{ backgroundImage: NOISE_BG }}></div>
     </div>
   );
 };
